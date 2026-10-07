@@ -147,4 +147,5 @@ Developed with the assistance of an AI coding agent (Codebuff) for scaffolding
 and boilerplate; architecture, section-generation strategy, fact-guard rules
 and demo design were defined against the assignment brief and are documented
 in-source. All code was reviewed and exercised via the automated test suite
-(19 tests) and the three demo cases. No other developers contributed.
+(26 tests, including the OpenRouter fallback chain with stubbed HTTP) and the
+three demo cases. No other developers contributed.
