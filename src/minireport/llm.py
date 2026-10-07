@@ -21,19 +21,21 @@ import httpx
 
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Six free models, provider-diverse, tuned against live traffic on 2026-10-07:
-# a real summarise() call failed on gemma (429), inkling-small (403: OpenRouter
-# serves it only on agentic harnesses), nemotron-3-super (empty body) and ling
-# (429) before poolside answered -- the chain is not theoretical.  Model IDs
-# verified free (0/0 pricing) against https://openrouter.ai/api/v1/models;
-# refresh from that endpoint before relying on it.
+# Six free models, capability-first, each verified against the live API with a
+# real call on 2026-10-07 (see test_fallback_models_all_free_and_live and the
+# candidate scan): 1 & 2 answered instantly with clean output, 3 & 5 are proven
+# performers whose free-tier 429s rotate, 4 is the largest free model (its
+# reasoning prose is rejected by _post, see below), 6 is OpenRouter's wildcard
+# router over whatever free model is currently available.  Empty-response and
+# harness-restricted models (dots-3-note, ling-3.0-sante, apodex, inkling)
+# were measured and deliberately excluded.
 FALLBACK_MODELS: list[str] = [
-    "google/gemma-4-31b-it:free",        # main: newest Gemma IT, strong instructions
-    "nvidia/nemotron-3.5-lightning:free",  # 1M context, fast new-gen Nemotron
-    "poolside/laguna-s-2.1:free",        # answered when nothing else did in live checks
-    "google/gemma-4-26b-a4b-it:free",    # smaller Gemma sibling
-    "inclusionai/ling-3.1-flash",        # fast; occasional 429s
-    "openrouter/free",                  # wildcard router: any available free model
+    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE: instant, clean (main)
+    "inclusionai/ling-3.1-flash",              # fast, clean output (free by default)
+    "google/gemma-4-31b-it:free",              # 31B dense; transient 429s at peak
+    "nvidia/nemotron-3-ultra-550b-a55b:free",  # biggest free model; reasoning-rejected
+    "poolside/laguna-s-2.1:free",              # answered in two earlier live runs
+    "openrouter/free",                         # wildcard: any currently free model
 ]
 
 PROMPT_TEMPLATE = """You are drafting the "Summary and observations" section of a draft
@@ -184,12 +186,21 @@ class OpenRouterLLM:
         raise RuntimeError("all OpenRouter fallback models failed -> " + " | ".join(errors[:3]))
 
     def _post(self, model: str, prompt: str) -> str:
-        """One chat completion request; returns the text or raises."""
+        """One chat completion request; returns the text or raises.
+
+        ``reasoning.enabled=False`` is sent for every model: reasoning-mode
+        models (Nemotron etc.) otherwise put the answer into a separate
+        ``message.reasoning`` field and leave ``content`` empty.  Non-reasoning
+        models simply ignore the parameter.  If a model still returns only a
+        reasoning field, the attempt fails rather than leaking thinking text
+        into a report.
+        """
         body = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
             "max_tokens": 400,
+            "reasoning": {"enabled": False},
         }
         with httpx.Client(timeout=self.TIMEOUT) as client:
             resp = client.post(BASE_URL, headers=self._headers, json=body)
@@ -199,10 +210,21 @@ class OpenRouterLLM:
             except Exception:
                 detail = resp.text[:120]
             raise RuntimeError(f"HTTP {resp.status_code}: {detail}")
-        content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "")
-        text = strip_reasoning((content or ""))
+        message = (resp.json().get("choices") or [{}])[0].get("message", {})
+        content = (message.get("content") or "").strip()
+        if not content and (message.get("reasoning") or "").strip():
+            raise RuntimeError("model returned reasoning-only output")
+        text = strip_reasoning(content)
         if not text:
             raise RuntimeError("empty response body")
+        # Last guard: some large free models narrate their reasoning ("The user
+        # wants ...", "Key data points: ...") before answering.  If that prose
+        # survives the stripper, reject the attempt so no meta-text can ever
+        # reach a report; the chain simply tries the next model.
+        head = text[:120].lower()
+        if head.startswith(("the user ", "key data points", "as an ai")) or \
+                "user wants" in head or "user is asking" in head or "here's a thinking" in head:
+            raise RuntimeError("reasoning preamble could not be stripped")
         return text
 
 
