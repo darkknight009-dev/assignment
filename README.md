@@ -33,11 +33,14 @@ Optional AI narrative: get a free key at https://openrouter.ai/keys, put it
 in a `.env` file (copy `.env.example`; `.env` is gitignored) or export
 `OPENROUTER_API_KEY` directly, then use `--ai openrouter` (CLI) or the AI
 toggle (UI). The loader reads the nearest `.env` automatically (cwd upward);
-real environment variables always win. The summary is drafted by a **fallback chain of 6 free OpenRouter
-models** (Gemma 4 → Inkling Small → Nemotron 3 Super → Ling 3.1 Flash → Laguna
-S 2.1 → LFM 2.5); if one is rate-limited or down the next takes over, and the
-per-model attempt log is shown in the review UI. Without a key the app uses
-the deterministic fallback summary — nothing breaks.
+real environment variables always win. The summary is drafted by a **fallback
+chain of 6 free OpenRouter models**, ordered capability-first and verified
+with live calls: Nemotron 3 Super 120B → Ling 3.1 Flash → Gemma 4 31B →
+Nemotron 3 Ultra 550B → Laguna S 2.1 → openrouter/free (wildcard). If one is
+rate-limited or down the next takes over, and the per-model attempt log is
+shown in the review UI. Reasoning-mode responses are disabled/rejected so no
+model "thinking" can enter a report. Without a key the app uses the
+deterministic fallback summary — nothing breaks.
 
 ## Input set
 
