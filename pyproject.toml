@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "minireport"
+version = "0.1.0"
+description = "Mini protocol-based report generator prototype"
+requires-python = ">=3.11"
+dependencies = [
+  "python-docx>=1.1",
+  "openpyxl>=3.1",
+  "reportlab>=4.0",
+  "pypdf>=4.3",
+  "pypdfium2>=4.30",
+  "streamlit>=1.49",
+  "openai>=1.100",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.4"]
+test = ["pytest>=8.4"]
+
+[project.scripts]
+generate-report = "minireport.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["minireport*"]
+
+[tool.setuptools.package-data]
+minireport = ["py.typed"]

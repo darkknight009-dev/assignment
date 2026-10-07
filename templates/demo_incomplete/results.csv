@@ -1,0 +1,5 @@
+sample_id,measurement,unit,observation
+S-01,48.2,Nm,steady reading
+S-02,58.4,Nm,reading drifted upward before movement
+S-03,46.9,Nm,slight settle before first movement
+S-05,49.8,Nm,steady reading
