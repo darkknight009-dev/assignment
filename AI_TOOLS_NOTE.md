@@ -23,9 +23,10 @@ Per the assignment's submission requirements:
 
 **Verification performed**
 
-- 19 automated tests (`python -m pytest`) covering the three mandatory demo
-  cases, Pass/Fail boundary behaviour, the fact guard, retrieval citations and
-  placeholder detection.
+- 26 automated tests (`python -m pytest`) covering the three mandatory demo
+  cases, Pass/Fail boundary behaviour, the fact guard, retrieval citations,
+  placeholder detection and the OpenRouter free-model fallback chain
+  (stubbed, no network).
 - End-to-end CLI runs of all three demo cases with artifact inspection
   (DOCX text, XLSX cells, PDF text extraction, ZIP contents).
 - Streamlit UI exercised with Streamlit's AppTest framework: scenario
