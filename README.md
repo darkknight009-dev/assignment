@@ -29,9 +29,11 @@ streamlit run src/minireport/ui.py     # or use the UI
 
 Requires Python 3.11+. All processing is local; no network access is needed.
 
-Optional AI narrative: get a free key at https://openrouter.ai/keys, then
-`export OPENROUTER_API_KEY=...` and use `--ai openrouter` (CLI) or the AI
-toggle (UI). The summary is drafted by a **fallback chain of 6 free OpenRouter
+Optional AI narrative: get a free key at https://openrouter.ai/keys, put it
+in a `.env` file (copy `.env.example`; `.env` is gitignored) or export
+`OPENROUTER_API_KEY` directly, then use `--ai openrouter` (CLI) or the AI
+toggle (UI). The loader reads the nearest `.env` automatically (cwd upward);
+real environment variables always win. The summary is drafted by a **fallback chain of 6 free OpenRouter
 models** (Gemma 4 → Inkling Small → Nemotron 3 Super → Ling 3.1 Flash → Laguna
 S 2.1 → LFM 2.5); if one is rate-limited or down the next takes over, and the
 per-model attempt log is shown in the review UI. Without a key the app uses
@@ -147,5 +149,6 @@ Developed with the assistance of an AI coding agent (Codebuff) for scaffolding
 and boilerplate; architecture, section-generation strategy, fact-guard rules
 and demo design were defined against the assignment brief and are documented
 in-source. All code was reviewed and exercised via the automated test suite
-(26 tests, including the OpenRouter fallback chain with stubbed HTTP) and the
-three demo cases. No other developers contributed.
+(27 tests, including the OpenRouter fallback chain with stubbed HTTP and
+reasoning-leak stripping) and the three demo cases. No other developers
+contributed.
