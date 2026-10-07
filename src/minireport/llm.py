@@ -1,7 +1,8 @@
 """AI narrative via the OpenRouter API with a free-model fallback chain.
 
-Activated with ``--ai openrouter`` (CLI) or the AI toggle (UI).  Requires
-``OPENROUTER_API_KEY`` in the environment; every other path uses the
+Activated with ``--ai openrouter`` (CLI) or the AI toggle (UI).  Requires an
+``OPENROUTER_API_KEY``, read from the environment or auto-loaded from a
+``.env`` file (see :func:`load_env_file`); every other path uses the
 deterministic fallback summary, so the app never depends on the API.
 
 The fallback chain tries the listed free models in order.  Free endpoints can
@@ -13,21 +14,26 @@ draft wins and the outcome of each attempt is surfaced to the review UI.
 from __future__ import annotations
 
 import os
+import re
+from pathlib import Path
 
 import httpx
 
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Six free models, provider-diverse, instruction-following quality first.
-# Verified free (0/0 pricing) against https://openrouter.ai/api/v1/models
-# on 2026-10-07; refresh from that endpoint before relying on it.
+# Six free models, provider-diverse, tuned against live traffic on 2026-10-07:
+# a real summarise() call failed on gemma (429), inkling-small (403: OpenRouter
+# serves it only on agentic harnesses), nemotron-3-super (empty body) and ling
+# (429) before poolside answered -- the chain is not theoretical.  Model IDs
+# verified free (0/0 pricing) against https://openrouter.ai/api/v1/models;
+# refresh from that endpoint before relying on it.
 FALLBACK_MODELS: list[str] = [
-    "google/gemma-4-31b-it:free",          # newest Gemma IT, strong instruction following (main)
-    "thinkingmachines/inkling-small:free",  # 1M-context general model
-    "nvidia/nemotron-3-super-120b-a12b:free",  # large nvidia MoE, strong quality
-    "inclusionai/ling-3.1-flash",           # fast recent flash model (free by default)
-    "poolside/laguna-s-2.1:free",           # diverse provider fallback
-    "liquid/lfm-2.5-2.6b:free",             # small/light, best last-resort for quota
+    "google/gemma-4-31b-it:free",        # main: newest Gemma IT, strong instructions
+    "nvidia/nemotron-3.5-lightning:free",  # 1M context, fast new-gen Nemotron
+    "poolside/laguna-s-2.1:free",        # answered when nothing else did in live checks
+    "google/gemma-4-26b-a4b-it:free",    # smaller Gemma sibling
+    "inclusionai/ling-3.1-flash",        # fast; occasional 429s
+    "openrouter/free",                  # wildcard router: any available free model
 ]
 
 PROMPT_TEMPLATE = """You are drafting the "Summary and observations" section of a draft
@@ -39,6 +45,8 @@ Hard rules:
 - Do not restate failures as successes and never invent causes or explanations.
 - Mention missing measurements and missing attachments explicitly if present.
 - 120-180 words, plain professional tone, no headings, no bullet lists.
+- Output ONLY the finished paragraph text. Do NOT include any analysis,
+  thinking process, notes about the task, or commentary of any kind.
 
 FACTS:
 {facts}
@@ -46,6 +54,87 @@ FACTS:
 REFERENCE EXCERPTS:
 {context}
 """
+
+
+def load_env_file(start_dir: str | Path | None = None, max_up: int = 6) -> bool:
+    """Load KEY=VALUE pairs from the nearest ``.env`` file.
+
+    Searches ``start_dir`` (default: cwd) and upward, so both ``streamlit``
+    and repo-rooted CLI runs pick up the same file.  Existing environment
+    variables always win (``setdefault``); comments, blank lines and quotes
+    are handled.  The key itself is never logged.
+    """
+    start = Path(start_dir or os.getcwd()).resolve()
+    for candidate in [start, *list(start.parents)[:max_up]]:
+        env_file = candidate / ".env"
+        if env_file.is_file():
+            try:
+                lines = env_file.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                return False
+            for raw in lines:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key:
+                    os.environ.setdefault(key, value)
+            return True
+    return False
+
+
+STRIP_PATTERNS = (
+    re.compile(r"^Here'?s (?:a|the) thinking process[^:]*:\s*", re.IGNORECASE),
+    re.compile(r"^Let me (?:analyze|analyse|think)[^:]*:\s*", re.IGNORECASE),
+    re.compile(r"^\s*\*{0,2}(?:ANALYSIS|ANALYZE|PLAN|REASONING|THINKING)\s*:?\s*\*{0,2}$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^Okay,? .{0,80}?\.") ,
+)
+
+
+def strip_reasoning(text: str) -> str:
+    """Remove chain-of-thought / task-analysis preamble some free models emit."""
+    out = text.strip()
+    for pattern in STRIP_PATTERNS:
+        out = pattern.sub("", out)
+    # Numbered thinking blocks: leading run of lines like "1. ..." where the
+    # FIRST numbered line looks like reasoning (e.g. "Analyze the request");
+    # the whole block including its sub-bullets is then dropped.  A plain
+    # numbered list (first line is real content) is preserved untouched.
+    lines = out.splitlines()
+    i = 0
+    reasoning_first = None
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+        m = re.match(r"^(\d+)\.\s+(.*)$", line)
+        if m:
+            if reasoning_first is None:
+                looks_reasoning = re.match(
+                    r"\*{0,2}(?:Analyze|Review|Understand|Identify|Draft|Compose|"
+                    r"Structure|Format|Check|Verify|Ensure|Note|Key|Task|Goal)\b",
+                    m.group(2), re.IGNORECASE)
+                if looks_reasoning:
+                    reasoning_first = i
+                    i += 1
+                    continue
+                else:
+                    break  # real numbered content starts here
+            i += 1
+            continue
+        if reasoning_first is not None and (line.startswith(("-", "*")) or line.startswith("   ")):
+            i += 1  # sub-bullet of the reasoning block
+            continue
+        break
+    if reasoning_first is not None:
+        out = "\n".join(lines[i:])
+        # drop a leaked section title like "**Summary and observations:**"
+        out = re.sub(r"^\s*\**\s*(?:#{1,3}\s+|Summary (?:and|&) observations:?\s*)\**\s*",
+                     "", out.strip(), count=1, flags=re.IGNORECASE)
+    return out.strip()
 
 
 class OpenRouterLLM:
@@ -56,10 +145,12 @@ class OpenRouterLLM:
     TIMEOUT = 45.0
 
     def __init__(self) -> None:
+        load_env_file()
         api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise RuntimeError(
-                "OPENROUTER_API_KEY is not set; run with --ai off or export the key"
+                "OPENROUTER_API_KEY is not set; run with --ai off or add it to "
+                ".env (see .env.example)"
             )
         self._headers = {
             "Authorization": f"Bearer {api_key}",
@@ -109,7 +200,7 @@ class OpenRouterLLM:
                 detail = resp.text[:120]
             raise RuntimeError(f"HTTP {resp.status_code}: {detail}")
         content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "")
-        text = (content or "").strip()
+        text = strip_reasoning((content or ""))
         if not text:
             raise RuntimeError("empty response body")
         return text

@@ -176,10 +176,12 @@ class TestOpenRouterFallbackChain:
         inst._post = responder
         return inst
 
-    def test_no_key_raises_cleanly(self, monkeypatch):
+    def test_no_key_raises_cleanly(self, monkeypatch, tmp_path):
         from minireport.llm import OpenRouterLLM
 
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        # empty tmp cwd: no .env file exists in the lookup chain
+        monkeypatch.chdir(tmp_path)
         with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
             OpenRouterLLM()
 
@@ -263,6 +265,21 @@ class TestOpenRouterFallbackChain:
         s = next(x for x in res.sections if x.key == "Summary and observations")
         assert s.ai_used and s.ai_model == L.FALLBACK_MODELS[1]
         assert len(s.ai_attempts) == 2
+
+    def test_strip_reasoning_removes_thinking_leaks(self):
+        from minireport.llm import strip_reasoning
+
+        leaked = strip_reasoning(
+            "Here's a thinking process:\n\n1.  **Analyze the Request:**\n"
+            "   - Task: Draft the Summary\n2.  **Compose:**\n"
+            "   - Write the paragraph\n\n" + self._CLEAN_DRAFT)
+        assert leaked == self._CLEAN_DRAFT
+
+        assert strip_reasoning("Okay, let me analyze first.\n" + self._CLEAN_DRAFT) == self._CLEAN_DRAFT
+        assert strip_reasoning(self._CLEAN_DRAFT) == self._CLEAN_DRAFT
+        assert strip_reasoning("1. First point.\n2. Second point.") == "1. First point.\n2. Second point."
+
+    _CLEAN_DRAFT = "A total of 5 samples were evaluated; 5 passed and 0 failed."
 
     def test_fallback_models_all_free_and_live(self):
         """Documentation test: every chained model ID appears in OpenRouter's
