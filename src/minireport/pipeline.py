@@ -39,6 +39,7 @@ class GenerationResult:
     checklist: list[WarningItem]
     attachment_labels: dict[str, str]  # filename -> label
     protocol: object = None  # Protocol object, for UI editing
+    input_dir: Path | None = None  # where inputs were loaded from (edit flows rely on this)
     placeholders_used: list[str] = field(default_factory=list)
     unfilled_placeholders: list[str] = field(default_factory=list)
     ai_discarded_drafts: list[dict] = field(default_factory=list)
@@ -120,6 +121,7 @@ def generate(input_dir: str | Path, output_dir: str | Path, llm=None) -> Generat
         checklist=checklist,
         attachment_labels=attachment_labels,
         protocol=bundle.protocol,
+        input_dir=Path(input_dir),
         placeholders_used=placeholders_used,
         unfilled_placeholders=unfilled,
         ai_discarded_drafts=ai_discarded,

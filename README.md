@@ -24,8 +24,30 @@ python -m minireport.cli inputs outputs            # demo case 1: complete
 python -m minireport.cli inputs/demo_variants/failing outputs_failing       # case 2
 python -m minireport.cli inputs/demo_variants/incomplete outputs_incomplete # case 3
 
-streamlit run src/minireport/ui.py     # or use the UI
+streamlit run src/minireport/ui.py     # or use the classic UI
 ```
+
+### Web UI (Next.js)
+
+A modern frontend lives in `web/` (Next.js 15, React 19, plain-CSS editorial
+design system — ink/bone/international-orange, IBM Plex Mono, no
+glassmorphism). It talks to the same Python engine over a JSON bridge:
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:3000
+```
+
+Flow: pick a demo case (complete / failing / incomplete) → watch the animated
+8-stage engine pipeline → review the validation checklist and each section's
+provenance (citations, AI chain log with which model answered) → edit the
+summary or the limits/measurements → regenerate → download DOCX / XLSX /
+PDF / ZIP. The Next.js API route spawns the Python bridge
+(`minireport.webapi_cli`) with the repo root as cwd; edit state persists in
+`/tmp/minireport/webcache/<scenario>/state.json` so edits work across
+requests. Set `OPENROUTER_API_KEY` (or `.env`) before starting to enable AI
+summaries.
 
 Requires Python 3.11+. All processing is local; no network access is needed.
 
@@ -128,9 +150,28 @@ inputs/ ──► inputs.py (locate & load)
              validation.py ──► checklist (planned/actual, missing, range, placeholders)
 ```
 
-UI: `src/minireport/ui.py` (Streamlit) — input source, generation, checklist,
-per-section provenance, summary editing, limit/result editing with full
-regeneration, artifact downloads. CLI: `src/minireport/cli.py`.
+UIs: `web/` (Next.js 15 + React 19 — hero, scenario picker, animated
+pipeline, provenance sections, AI chain log, summary editor, limit/value
+editing, downloads) and `src/minireport/ui.py` (Streamlit classic). Both drive
+the same Python engine. CLI: `src/minireport/cli.py`.
+```
+inputs/ ──► inputs.py (locate & load)
+             parsers.py (protocol / CSV / template)
+             docreader.py (PDF/DOCX/TXT text extraction)
+                  │
+                  ├──► evidence.py  ← the ONLY Pass/Fail decision point
+                  ├──► retrieval.py (local TF-IDF index, paragraph chunks)
+                  │        └── factguard.py (number allow-list check)
+                  ├──► sections.py (4 section builders + provenance)
+                  │
+                  └──► pipeline.py ──► report.py (DOCX from template)
+                                     ──► xlsx.py (workbook)
+                                     ──► pdfbuild.py (combined PDF + attachments)
+                                     ──► ZIP package
+             validation.py ──► checklist (planned/actual, missing, range, placeholders)
+                  ▲
+                  └── webapi.py ◄── web/app/api/generate (Next.js route → bridge CLI)
+```
 
 ## Known limitations
 
