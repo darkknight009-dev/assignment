@@ -14,7 +14,7 @@ dependencies = [
   "pypdf>=4.3",
   "pypdfium2>=4.30",
   "streamlit>=1.49",
-  "openai>=1.100",
+  "httpx>=0.28",
 ]
 
 [project.optional-dependencies]

@@ -2,7 +2,7 @@
 
 Usage:
     python -m minireport.cli inputs/ outputs/
-    python -m minireport.cli inputs/ outputs/ --ai openai
+    python -m minireport.cli inputs/ outputs/ --ai openrouter
 """
 
 from __future__ import annotations
@@ -16,15 +16,16 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Mini protocol-based report generator")
     ap.add_argument("input_dir", help="folder containing protocol.md, results.csv, report_template.docx, references, PDF attachments")
     ap.add_argument("output_dir", nargs="?", default="outputs", help="where to write generated artifacts (default: outputs)")
-    ap.add_argument("--ai", choices=["off", "openai"], default="off",
-                    help="AI summary mode (default: off -> deterministic fallback)")
+    ap.add_argument("--ai", choices=["off", "openrouter"], default="off",
+                    help="AI summary mode (default: off -> deterministic fallback; "
+                         "openrouter needs OPENROUTER_API_KEY in the environment)")
     args = ap.parse_args(argv)
 
     llm = None
-    if args.ai == "openai":
-        from .llm import OpenAILLM
+    if args.ai == "openrouter":
+        from .llm import OpenRouterLLM
 
-        llm = OpenAILLM()  # reads OPENAI_API_KEY from the environment
+        llm = OpenRouterLLM()  # reads OPENROUTER_API_KEY from the environment
 
     from .pipeline import generate
 

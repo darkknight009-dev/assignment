@@ -120,8 +120,10 @@ def process_label(sec: SectionContent) -> str:
         "rag": "RAG - retrieval over reference documents, sources cited",
         "evidence": "evidence-based, deterministic processing",
         "ai": "AI-assisted narrative (fact-checked)",
+        "deterministic (AI unavailable)": "deterministic (AI unavailable; see notes)",
+        "deterministic (AI draft discarded)": "deterministic (AI draft discarded on fact check; see notes)",
     }
-    return label.get(sec.process.split(" ")[0], sec.process)
+    return label.get(sec.process) or label.get(sec.process.split(" ")[0], sec.process)
 
 
 def _results_table(evidence: Evidence):

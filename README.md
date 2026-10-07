@@ -29,9 +29,13 @@ streamlit run src/minireport/ui.py     # or use the UI
 
 Requires Python 3.11+. All processing is local; no network access is needed.
 
-Optional AI narrative: `export OPENAI_API_KEY=...` then use `--ai openai`
-(CLI) or the AI toggle (UI). Without a key the app uses the deterministic
-fallback summary — nothing breaks.
+Optional AI narrative: get a free key at https://openrouter.ai/keys, then
+`export OPENROUTER_API_KEY=...` and use `--ai openrouter` (CLI) or the AI
+toggle (UI). The summary is drafted by a **fallback chain of 6 free OpenRouter
+models** (Gemma 4 → Inkling Small → Nemotron 3 Super → Ling 3.1 Flash → Laguna
+S 2.1 → LFM 2.5); if one is rate-limited or down the next takes over, and the
+per-model attempt log is shown in the review UI. Without a key the app uses
+the deterministic fallback summary — nothing breaks.
 
 ## Input set
 

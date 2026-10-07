@@ -19,6 +19,8 @@ PROCESS_LABEL = {
     "rag": "Process control: RAG (retrieval over reference documents, sources cited)",
     "evidence": "Process control: evidence-based, deterministic processing",
     "ai": "Process control: AI-assisted narrative (fact-checked)",
+    "deterministic (AI unavailable)": "Process control: deterministic (AI unavailable; see notes)",
+    "deterministic (AI draft discarded)": "Process control: deterministic (AI draft discarded on fact check; see notes)",
 }
 
 _WML = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -169,9 +171,10 @@ def _write_section(doc, heading_para, sec: SectionContent, evidence: Evidence) -
 
     ins = _Inserter(doc, heading_para._p)
 
-    # process control marker
-    p = ins.paragraph(PROCESS_LABEL.get(sec.process.split(" ")[0],
-                                        f"Process control: {sec.process}"))
+    # process control marker (exact match first, then first-word fallback)
+    label = PROCESS_LABEL.get(sec.process) or PROCESS_LABEL.get(
+        sec.process.split(" ")[0], f"Process control: {sec.process}")
+    p = ins.paragraph(label)
     run = p.runs[0] if p.runs else p.add_run("")
     run.italic = True
     run.font.size = Pt(9)

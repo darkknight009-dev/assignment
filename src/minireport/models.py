@@ -101,3 +101,5 @@ class SectionContent:
     ai_used: bool = False
     ai_discarded: bool = False  # AI draft was generated but failed fact check
     ai_discard_reason: str = ""
+    ai_model: str = ""  # which model produced the kept/discarded draft
+    ai_attempts: list = field(default_factory=list)  # [(model, "ok"|"error: ...")] from fallback chain

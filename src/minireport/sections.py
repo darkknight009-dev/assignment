@@ -163,29 +163,43 @@ def build_summary_section(bundle, evidence: Evidence, method_section: SectionCon
 
     ai_text: str | None = None
     ai_error = ""
+    ai_model = ""
+    ai_attempts: list = []
     if llm is not None:
         try:
             ai_text = llm.summarise(facts, context_block)
+            ai_model = getattr(llm, "model_used", "") or ""
+            ai_attempts = list(getattr(llm, "attempt_log", []))
         except Exception as exc:  # network, auth, quota... fall back cleanly
             ai_error = f"{type(exc).__name__}: {exc}"
+            ai_model = getattr(llm, "model_used", "") or ""
+            ai_attempts = list(getattr(llm, "attempt_log", []))
             ai_text = None
 
     if ai_text:
         report = check_text(ai_text, allowed)
         if report.violations:
+            # Discard the AI draft entirely, but still ship a complete section:
+            # the deterministic summary fills the body, the discard reason and
+            # fallback-chain log stay attached for the review UI.
             return SectionContent(
-                key="Summary and observations", process="ai", body="", ai_used=False,
+                key="Summary and observations",
+                process="deterministic (AI draft discarded)",
+                body=_deterministic_summary(bundle, evidence, oor, miss, missing_att),
+                ai_used=False,
                 ai_discarded=True,
                 ai_discard_reason="AI draft failed fact check on: " + "; ".join(report.violations[:5]),
                 warnings=["AI draft discarded; deterministic summary used instead. "
-                          + "Discarded draft is kept in the review UI for transparency."],
+                          "Discarded draft is kept in the review UI for transparency."],
                 citations=_citations_from(hits),
+                ai_model=ai_model, ai_attempts=ai_attempts,
             )
         return SectionContent(
             key="Summary and observations", process="ai", body=ai_text, ai_used=True,
             citations=_citations_from(hits),
             warnings=["AI-assisted draft: verified against actual results and retrieved context; "
                       "edit before export."],
+            ai_model=ai_model, ai_attempts=ai_attempts,
         )
 
     # Deterministic fallback (no LLM configured or AI errored)
@@ -195,7 +209,8 @@ def build_summary_section(bundle, evidence: Evidence, method_section: SectionCon
     if ai_error:
         warnings.append(f"AI call failed ({ai_error}); deterministic summary used.")
     return SectionContent(key="Summary and observations", process=process, body=body,
-                          warnings=warnings, citations=_citations_from(hits))
+                          warnings=warnings, citations=_citations_from(hits),
+                          ai_model=ai_model, ai_attempts=ai_attempts)
 
 
 def _deterministic_summary(bundle, evidence, oor, miss, missing_att) -> str:

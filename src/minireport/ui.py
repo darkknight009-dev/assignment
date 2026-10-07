@@ -84,9 +84,10 @@ with st.sidebar:
         else:
             st.info("Protocol, results CSV and template are required.")
 
-    ai_mode = st.toggle("AI-assisted summary (OpenAI)", value=False,
-                        help="Requires OPENAI_API_KEY in the environment. "
-                             "Without it the deterministic fallback is used.")
+    ai_mode = st.toggle("AI-assisted summary (OpenRouter)", value=False,
+                        help="Requires OPENROUTER_API_KEY in the environment. "
+                             "Tries a chain of 6 free models with automatic fallback; "
+                             "without a key the deterministic fallback is used.")
 
     go = st.button("Generate report package", type="primary", disabled=input_dir is None)
 
@@ -104,10 +105,10 @@ if go or "cached_result" not in st.session_state or stale:
         llm = None
         if ai_mode:
             try:
-                from .llm import OpenAILLM
+                from .llm import OpenRouterLLM
             except ImportError:  # streamlit runs this file standalone
-                from minireport.llm import OpenAILLM
-            llm = OpenAILLM()
+                from minireport.llm import OpenRouterLLM
+            llm = OpenRouterLLM()
         try:
             from .pipeline import generate
         except ImportError:
@@ -157,12 +158,14 @@ with right:
     st.subheader("Sections & provenance")
     process_tag = {
         "deterministic": "DETERMINISTIC",
+        "deterministic (AI unavailable)": "DETERMINISTIC (AI UNAVAILABLE)",
+        "deterministic (AI draft discarded)": "DETERMINISTIC (AI DISCARDED)",
         "rag": "RAG",
         "evidence": "EVIDENCE",
         "ai": "AI-ASSISTED",
     }
     for sec in result.sections:
-        tag = process_tag.get(sec.process.split(" ")[0], sec.process.upper())
+        tag = process_tag.get(sec.process) or process_tag.get(sec.process.split(" ")[0], sec.process.upper())
         with st.expander(f"{sec.key}  ·  {tag}", expanded=sec.key.startswith("Summary")):
             st.markdown(f"**Body** — generated with process control: `{tag}`")
             st.text_area("visible_body", sec.body, height=220, key=f"body_{sec.key}",
@@ -171,6 +174,13 @@ with right:
                 st.caption("Sources:")
                 for c in sec.citations:
                     st.markdown(f"- `{c.reference}` (score {c.score})")
+            if sec.ai_attempts:
+                st.caption("AI fallback chain:")
+                for model, outcome in sec.ai_attempts:
+                    icon = "✅" if outcome == "ok" else "❌"
+                    st.markdown(f"- {icon} `{model}` — {outcome}")
+            if sec.ai_model and not sec.ai_attempts:
+                st.caption(f"Model: `{sec.ai_model}`")
             for w in sec.warnings:
                 st.caption(f"⚠️ {w}")
             if sec.ai_discarded:

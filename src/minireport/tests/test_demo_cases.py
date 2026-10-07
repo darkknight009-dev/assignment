@@ -163,6 +163,120 @@ class TestFactGuard:
         assert check_text("The wrench resolution is 0.1 Nm per the reference.", allowed).violations == []
 
 
+class TestOpenRouterFallbackChain:
+    """The AI summary chain: first free model wins, failures fall through,
+    everything is logged and attributed. No network: _post is stubbed."""
+
+    @staticmethod
+    def _llm_with(monkeypatch, responder):
+        from minireport.llm import OpenRouterLLM
+
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        inst = OpenRouterLLM()
+        inst._post = responder
+        return inst
+
+    def test_no_key_raises_cleanly(self, monkeypatch):
+        from minireport.llm import OpenRouterLLM
+
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+            OpenRouterLLM()
+
+    def test_first_model_success(self, monkeypatch):
+        from minireport import llm as L
+
+        calls = []
+
+        def responder(model, prompt):
+            calls.append(model)
+            return "All samples passed."
+
+        inst = self._llm_with(monkeypatch, responder)
+        assert inst.summarise("f", "c") == "All samples passed."
+        assert inst.model_used == L.FALLBACK_MODELS[0]
+        assert calls == [L.FALLBACK_MODELS[0]]
+        assert inst.attempt_log == [(L.FALLBACK_MODELS[0], "ok")]
+
+    def test_failover_to_third_model(self, monkeypatch):
+        from minireport import llm as L
+
+        seq = iter([RuntimeError("HTTP 402: quota"),
+                    RuntimeError("HTTP 429: rate limited"), None])
+
+        def responder(model, prompt):
+            err = next(seq)
+            if err:
+                raise err
+            return "Recovered."
+
+        inst = self._llm_with(monkeypatch, responder)
+        assert inst.summarise("f", "c") == "Recovered."
+        assert inst.model_used == L.FALLBACK_MODELS[2]
+        assert [o for _, o in inst.attempt_log] == [
+            "error: HTTP 402: quota", "error: HTTP 429: rate limited", "ok"]
+
+    def test_all_models_fail(self, monkeypatch):
+        from minireport import llm as L
+
+        def responder(model, prompt):
+            raise RuntimeError("down")
+
+        inst = self._llm_with(monkeypatch, responder)
+        with pytest.raises(RuntimeError, match="all OpenRouter fallback models failed"):
+            inst.summarise("f", "c")
+        assert len(inst.attempt_log) == len(L.FALLBACK_MODELS)
+
+    def test_discarded_ai_draft_still_ships_deterministic_body(self, monkeypatch, tmp_path):
+        from minireport import llm as L
+        from minireport.pipeline import generate
+
+        class InventLLM:
+            model_used = L.FALLBACK_MODELS[0]
+            attempt_log = [(L.FALLBACK_MODELS[0], "ok")]
+
+            def summarise(self, facts, ctx):
+                return "The retest averaged 47.31 Nm across units."  # invented
+
+        res = generate(INPUTS, tmp_path, llm=InventLLM())
+        s = next(x for x in res.sections if x.key == "Summary and observations")
+        assert s.ai_discarded and "47.31" in s.ai_discard_reason
+        assert s.ai_model == L.FALLBACK_MODELS[0]
+        assert s.body, "section must remain complete after discard"
+        assert "discarded" in s.process
+
+    def test_good_draft_attributed_after_failover(self, monkeypatch, tmp_path):
+        from minireport import llm as L
+        from minireport.pipeline import generate
+
+        class GoodLLM:
+            model_used = L.FALLBACK_MODELS[1]
+            attempt_log = [(L.FALLBACK_MODELS[0], "error: HTTP 429"),
+                           (L.FALLBACK_MODELS[1], "ok")]
+
+            def summarise(self, facts, ctx):
+                return ("A total of 5 samples were evaluated against the acceptance "
+                        "range 45 to 55 Nm: 5 passed and 0 failed. All measured results "
+                        "were within the acceptance range. Review and edit before approval.")
+
+        res = generate(INPUTS, tmp_path, llm=GoodLLM())
+        s = next(x for x in res.sections if x.key == "Summary and observations")
+        assert s.ai_used and s.ai_model == L.FALLBACK_MODELS[1]
+        assert len(s.ai_attempts) == 2
+
+    def test_fallback_models_all_free_and_live(self):
+        """Documentation test: every chained model ID appears in OpenRouter's
+        current free list (network call; skipped offline)."""
+        from minireport.llm import FALLBACK_MODELS, free_model_list
+
+        try:
+            live = free_model_list()
+        except Exception as exc:  # offline / network down
+            pytest.skip(f"OpenRouter model list unreachable: {exc}")
+        missing = [m for m in FALLBACK_MODELS if m not in live]
+        assert not missing, f"stale model IDs in fallback chain: {missing}"
+
+
 class TestPlaceholderDetection:
     def test_unknown_placeholder_flagged(self, tmp_path):
         from docx import Document

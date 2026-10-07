@@ -6,7 +6,7 @@ pypdf==4.3.1
 pypdfium2==4.30.0
 # UI
 streamlit==1.49.1
-# Optional AI narrative (falls back to deterministic mode if no key)
-openai==1.102.0
+# Optional AI narrative via OpenRouter (free-model fallback chain)
+httpx==0.28.1
 # Dev
 pytest>=8.4
