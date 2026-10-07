@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import path from "node:path";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -15,11 +16,13 @@ interface RunBody {
   sample_id?: string;
   value?: number;
   value_changed?: boolean;
+  input_dir?: string;
+  run_key?: string;
+  run?: string;
 }
 
 async function runPython(body: RunBody) {
   const { spawn } = await import("node:child_process");
-  const path = await import("node:path");
 
   // repo root = web/.. (works in dev and after `next build`)
   const root = path.resolve(process.cwd(), "..");
@@ -39,15 +42,20 @@ async function runPython(body: RunBody) {
     proc.stdout.on("data", (d) => (out += d));
     proc.stderr.on("data", (d) => (err += d));
     proc.on("close", (code) => {
-      if (code === 0 && out.trim().length > 0) {
+      // the bridge prints a JSON object on stdout even on failure
+      if (out.trim().length > 0) {
         try {
-          resolve({ status: 200, data: JSON.parse(out) });
-        } catch (e) {
-          resolve({ status: 500, data: { error: "bad JSON from engine: " + String(e).slice(0, 200), stderr: err.slice(-800) } });
+          const parsed = JSON.parse(out);
+          resolve({ status: parsed.error ? 500 : 200, data: parsed });
+          return;
+        } catch {
+          /* fall through to stderr */
         }
-      } else {
-        resolve({ status: 500, data: { error: err.trim().split("\n").slice(-3).join(" | ") || `engine exited ${code}` } });
       }
+      resolve({
+        status: 500,
+        data: { error: err.trim().split("\n").slice(-3).join(" | ") || `engine exited ${code}` },
+      });
     });
     proc.on("error", (e) => resolve({ status: 500, data: { error: "engine spawn failed: " + e.message } }));
   });
@@ -55,10 +63,65 @@ async function runPython(body: RunBody) {
 
 export async function POST(req: Request) {
   let body: RunBody;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+
+  if ((req.headers.get("content-type") || "").includes("multipart/form-data")) {
+    // ---- user-uploaded input set ------------------------------------------
+    const form = await req.formData();
+    const ai = form.get("ai") === "true";
+    const { randomUUID } = await import("node:crypto");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const os = await import("node:os");
+
+    const runKey = "custom_" + randomUUID().slice(0, 8);
+    const inputDir = path.join(os.tmpdir(), "minireport", "uploads", runKey);
+    await mkdir(inputDir, { recursive: true });
+
+    // canonical names the engine expects; other fields keep their names
+    const canon: Record<string, string> = {
+      protocol: "protocol.md",
+      results: "results.csv",
+      template: "report_template.docx",
+    };
+    for (const [field, stored] of Object.entries(canon)) {
+      const f = form.get(field);
+      if (f instanceof File && f.size > 0) {
+        await writeFile(path.join(inputDir, stored), Buffer.from(await f.arrayBuffer()));
+      }
+    }
+    let refs = 0, atts = 0;
+    for (const f of form.getAll("references")) {
+      if (f instanceof File && f.size > 0) {
+        await writeFile(path.join(inputDir, f.name), Buffer.from(await f.arrayBuffer()));
+        refs++;
+      }
+    }
+    for (const f of form.getAll("attachments")) {
+      if (f instanceof File && f.size > 0) {
+        await writeFile(path.join(inputDir, f.name), Buffer.from(await f.arrayBuffer()));
+        atts++;
+      }
+    }
+
+    const missing: string[] = [];
+    for (const f of ["protocol.md", "results.csv", "report_template.docx"]) {
+      if (!(await import("node:fs/promises")).stat(path.join(inputDir, f)).catch(() => null)) missing.push(f);
+    }
+    if (missing.length) {
+      return NextResponse.json(
+        { error: `upload incomplete — missing ${missing.join(", ")}. ` +
+                 "the protocol must be named protocol.md (or .txt), the results file results.csv, " +
+                 "the template report_template.docx." },
+        { status: 400 }
+      );
+    }
+
+    body = { action: "generate", input_dir: inputDir, run_key: runKey, ai };
+  } else {
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+    }
   }
 
   switch (body.action) {

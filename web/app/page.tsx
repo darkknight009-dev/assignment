@@ -27,6 +27,7 @@ interface ArtifactJ {
 }
 interface ResultJ {
   scenario: string;
+  runKey: string;
   aiRequested: boolean;
   draftBanner: string;
   checklist: ChecklistItem[];
@@ -116,6 +117,7 @@ function download(name: string, b64: string) {
 export default function Home() {
   const [scenario, setScenario] = useState<string>("complete");
   const [ai, setAi] = useState<boolean>(true);
+  const [uploading, setUploading] = useState(false);
   const [phase, setPhase] = useState<"idle" | "running" | "done" | "error">("idle");
   const [stageStates, setStageStates] = useState<boolean[]>(
     Array(STAGES.length).fill(false)
@@ -131,6 +133,12 @@ export default function Home() {
   const [value, setValue] = useState("");
   /* summary */
   const [summary, setSummary] = useState("");
+  /* uploaded files (own-input mode) */
+  const [protocolFile, setProtocolFile] = useState<File | null>(null);
+  const [resultsFile, setResultsFile] = useState<File | null>(null);
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [refFiles, setRefFiles] = useState<File[]>([]);
+  const [attFiles, setAttFiles] = useState<File[]>([]);
 
   /* pipeline animation while the engine runs */
   useEffect(() => {
@@ -156,6 +164,19 @@ export default function Home() {
     setTimeout(() => setToast(""), 3200);
   }, []);
 
+  const adoptResult = useCallback((data: ResultJ) => {
+    setResult(data);
+    setLower(String(data.edits.lower));
+    setUpper(String(data.edits.upper));
+    setSample(data.edits.samples[0] ?? "");
+    setValue(String(data.edits.measurements[data.edits.samples[0]] ?? ""));
+    const sum = data.sections.find(
+      (s: SectionJ) => s.key === "Summary and observations"
+    );
+    setSummary(sum?.body ?? "");
+    setPhase("done");
+  }, []);
+
   const runScenario = useCallback(
     async (scen: string, useAi: boolean) => {
       setPhase("running");
@@ -170,22 +191,45 @@ export default function Home() {
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        setResult(data);
-        setLower(String(data.edits.lower));
-        setUpper(String(data.edits.upper));
-        setSample(data.edits.samples[0] ?? "");
-        setValue(String(data.edits.measurements[data.edits.samples[0]] ?? ""));
-        const sum = data.sections.find(
-          (s: SectionJ) => s.key === "Summary and observations"
-        );
-        setSummary(sum?.body ?? "");
-        setPhase("done");
+        adoptResult(data);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setPhase("error");
       }
     },
-    []
+    [adoptResult]
+  );
+
+  const runUpload = useCallback(
+    async (useAi: boolean) => {
+      if (!protocolFile || !resultsFile || !templateFile) {
+        setError("upload all three required files first (protocol, results, template).");
+        setPhase("error");
+        return;
+      }
+      setPhase("running");
+      setStageStates(Array(STAGES.length).fill(false));
+      setError("");
+      setResult(null);
+      try {
+        const fd = new FormData();
+        fd.append("ai", String(useAi));
+        fd.append("protocol", protocolFile);
+        fd.append("results", resultsFile);
+        fd.append("template", templateFile);
+        refFiles.forEach((f) => fd.append("references", f));
+        attFiles.forEach((f) => fd.append("attachments", f));
+        const res = await fetch("/api/generate", { method: "POST", body: fd });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        adoptResult(data);
+        flash("uploaded inputs processed — outputs ready");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setPhase("error");
+      }
+    },
+    [protocolFile, resultsFile, templateFile, refFiles, attFiles, adoptResult, flash]
   );
 
   const applySummary = useCallback(async () => {
@@ -198,8 +242,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "apply_summary",
-          scenario: result.scenario,
-          ai: result.aiRequested,
+          run: result.runKey,
           text: summary,
         }),
       });
@@ -224,8 +267,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "apply_edits",
-          scenario: result.scenario,
-          ai: result.aiRequested,
+          run: result.runKey,
           lower: parseFloat(lower),
           upper: parseFloat(upper),
           sample_id: sample,
@@ -369,11 +411,110 @@ export default function Home() {
               <button
                 className="btn"
                 onClick={() => runScenario(scenario, ai)}
-                disabled={phase === "running"}
+                disabled={phase === "running" || uploading}
               >
                 {phase === "running" ? "working —" : phase === "done" ? "regenerate —" : "generate —"}
               </button>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* upload your own inputs */}
+      <section style={{ margin: "20px 0 0" }}>
+        <div className="sheet">
+          <div className="sheet-head">
+            <span className="sheet-title">01b · bring your own inputs</span>
+            <span className="sheet-index">same engine, your files</span>
+          </div>
+          <div className="sheet-body">
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 14,
+              }}
+            >
+              <div>
+                <label className="field-label">protocol (protocol.md / .txt)</label>
+                <input
+                  className="field"
+                  type="file"
+                  accept=".md,.txt"
+                  onChange={(e) => setProtocolFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+              <div>
+                <label className="field-label">raw results (results.csv)</label>
+                <input
+                  className="field"
+                  type="file"
+                  accept=".csv"
+                  onChange={(e) => setResultsFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+              <div>
+                <label className="field-label">report template (report_template.docx)</label>
+                <input
+                  className="field"
+                  type="file"
+                  accept=".docx"
+                  onChange={(e) => setTemplateFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+              <div>
+                <label className="field-label">reference documents (md / txt / docx)</label>
+                <input
+                  className="field"
+                  type="file"
+                  multiple
+                  accept=".md,.txt,.docx"
+                  onChange={(e) => setRefFiles(Array.from(e.target.files ?? []))}
+                />
+              </div>
+              <div>
+                <label className="field-label">pdf attachments</label>
+                <input
+                  className="field"
+                  type="file"
+                  multiple
+                  accept=".pdf"
+                  onChange={(e) => setAttFiles(Array.from(e.target.files ?? []))}
+                />
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex", gap: 14, alignItems: "center", marginTop: 18,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "var(--ink-faint)", maxWidth: "46ch" }}>
+                tip: copy the files from <b>inputs/</b> as templates — the csv must have
+                sample_id, measurement, unit, observation columns; the protocol is
+                key: value lines; the template holds [[PLACEHOLDERS]].
+              </span>
+              <div style={{ flex: 1 }} />
+              <button
+                className="btn secondary"
+                onClick={() => runUpload(ai)}
+                disabled={phase === "running"}
+              >
+                upload &amp; generate —
+              </button>
+            </div>
+            {(protocolFile || resultsFile || templateFile || refFiles.length || attFiles.length) ? (
+              <div
+                style={{
+                  marginTop: 12, fontFamily: "var(--mono)", fontSize: 11,
+                  color: "var(--chip-green)", lineHeight: 1.9,
+                }}
+              >
+                queued: {[protocolFile, resultsFile, templateFile].filter(Boolean).map((f) => f!.name).join(", ")}
+                {refFiles.length ? ` · ${refFiles.length} reference(s)` : ""}
+                {attFiles.length ? ` · ${attFiles.length} pdf(s)` : ""}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

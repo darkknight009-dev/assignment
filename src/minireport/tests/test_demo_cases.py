@@ -294,6 +294,52 @@ class TestOpenRouterFallbackChain:
         assert not missing, f"stale model IDs in fallback chain: {missing}"
 
 
+class TestWebBridge:
+    """The JSON bridge the Next.js app drives (webapi + webapi_cli)."""
+
+    def test_generate_and_summary_edit_roundtrip(self, tmp_path, monkeypatch):
+        import json as _json
+        from minireport.webapi import apply_summary_edit, run_generate
+
+        monkeypatch.setenv("MINIREPORT_WEB_CACHE", str(tmp_path))
+        payload = run_generate({"scenario": "failing", "ai": False})
+        run_key = payload["runKey"]
+        assert payload["scenario"] == "failing"
+        assert any(c["code"] == "OUT_OF_RANGE" for c in payload["checklist"])
+
+        edited = apply_summary_edit(run_key, "Reviewed: S-02 failed as measured.")
+        assert edited["summaryEdited"] is True
+        summary = next(s for s in edited["sections"]
+                       if s["key"] == "Summary and observations")
+        assert summary["body"] == "Reviewed: S-02 failed as measured."
+
+    def test_limit_edit_updates_reported_range(self, tmp_path, monkeypatch):
+        from minireport.webapi import apply_edits, run_generate
+
+        monkeypatch.setenv("MINIREPORT_WEB_CACHE", str(tmp_path))
+        payload = run_generate({"scenario": "failing", "ai": False})
+        run_key = payload["runKey"]
+        edited = apply_edits(run_key, {"lower": 45, "upper": 50, "value_changed": False})
+        assert edited["edits"]["upper"] == 50
+        oor = next(c for c in edited["checklist"] if c["code"] == "OUT_OF_RANGE")
+        assert "[45, 50]" in oor["message"]
+
+    def test_uploaded_input_dir(self, tmp_path, monkeypatch):
+        """Simulates the Next.js upload flow: files land in a temp dir."""
+        import shutil
+        from minireport.webapi import run_generate
+
+        up = tmp_path / "upload_in"
+        up.mkdir()
+        for f in INPUTS.iterdir():
+            if f.is_file():
+                shutil.copy2(f, up / f.name)
+        payload = run_generate({"input_dir": str(up), "run_key": "custom_t1", "ai": False})
+        assert payload["runKey"] == "custom_t1"
+        assert payload["scenario"] == "custom"
+        assert payload["artifacts"]["zip"]["size"] > 1000
+
+
 class TestPlaceholderDetection:
     def test_unknown_placeholder_flagged(self, tmp_path):
         from docx import Document

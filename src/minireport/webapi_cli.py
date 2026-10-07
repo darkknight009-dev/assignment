@@ -22,16 +22,14 @@ def main() -> int:
 
     action = payload.get("action")
     try:
-        from .webapi import apply_edits, apply_summary_edit, run_scenario
+        from .webapi import apply_edits, apply_summary_edit, run_generate
 
         if action == "generate":
-            data = run_scenario(payload.get("scenario", "complete"), bool(payload.get("ai")))
+            data = run_generate(payload)
         elif action == "apply_summary":
-            data = apply_summary_edit(
-                payload["scenario"], bool(payload.get("ai")), payload.get("text", "")
-            )
+            data = apply_summary_edit(payload["run"], payload.get("text", ""))
         elif action == "apply_edits":
-            data = apply_edits(payload["scenario"], bool(payload.get("ai")), payload)
+            data = apply_edits(payload["run"], payload)
         else:
             print(json.dumps({"error": f"unknown action '{action}'"}))
             return 2

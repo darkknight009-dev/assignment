@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -44,22 +46,49 @@ SCENARIOS: dict[str, str] = {
     "incomplete": "inputs/demo_variants/incomplete",
 }
 
-CACHE_BASE = Path("/tmp/minireport/webcache")
+def _cache_base() -> Path:
+    """Overridable so tests can isolate their workspaces."""
+    return Path(os.environ.get("MINIREPORT_WEB_CACHE", "/tmp/minireport/webcache"))
 
 
-def _workspace(scenario: str, ai: bool) -> Path:
-    d = CACHE_BASE / f"{scenario}_{'ai' if ai else 'plain'}"
+def _workspace(run_key: str) -> Path:
+    """Every generation run gets a stable workspace key.
+
+    Built-in demo cases use ``<scenario>_<ai|plain>``; user-uploaded input
+    sets use a ``custom_<id>`` key minted by the web layer.  All subsequent
+    calls (summary edit, limit edits, downloads) address the run by key, so
+    state survives across separate bridge processes.
+    """
+    d = _cache_base() / run_key
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 # --------------------------------------------------------------- generate ---
-def run_scenario(scenario: str, ai: bool) -> dict:
-    """Full generation for one demo scenario."""
-    if scenario not in SCENARIOS:
-        raise ValueError(f"unknown scenario '{scenario}'")
-    input_dir = SCENARIOS[scenario]
-    ws = _workspace(scenario, ai)
+def run_generate(payload: dict) -> dict:
+    """Full generation.  Two modes:
+
+    * built-in demo:  ``{"scenario": "complete|failing|incomplete", "ai": b}``
+    * uploaded files: ``{"input_dir": "/abs/path", "run_key": "custom_x", "ai": b}``
+      (the web layer wrote the uploaded files there; names must follow the
+      expected convention: protocol.md/.txt, results.csv, report_template.docx)
+    """
+    ai = bool(payload.get("ai"))
+    input_dir = payload.get("input_dir")
+    if input_dir:
+        scenario = "custom"
+        run_key = payload.get("run_key") or f"custom_{int(time.time())}"
+        if not Path(input_dir).is_dir():
+            raise ValueError(f"uploaded input dir missing: {input_dir}")
+        input_dir = str(Path(input_dir).resolve())
+    else:
+        scenario = payload.get("scenario", "complete")
+        if scenario not in SCENARIOS:
+            raise ValueError(f"unknown scenario '{scenario}'")
+        input_dir = SCENARIOS[scenario]
+        run_key = f"{scenario}_{'ai' if ai else 'plain'}"
+
+    ws = _workspace(run_key)
 
     llm = OpenRouterLLM() if ai else None
     result = generate(input_dir, ws, llm=llm)
@@ -77,7 +106,7 @@ def run_scenario(scenario: str, ai: bool) -> dict:
         "summary_edited": False,
     }
     (ws / "state.json").write_text(json.dumps(state, indent=1))
-    return _serialize(result, scenario, ai, bundle.protocol)
+    return _serialize(result, scenario, ai, bundle.protocol, run_key)
 
 
 def _protocol_state(bundle) -> dict:
@@ -93,17 +122,17 @@ def _protocol_state(bundle) -> dict:
 
 
 # -------------------------------------------------------------- edit flows --
-def apply_summary_edit(scenario: str, ai: bool, text: str) -> dict:
-    state, ws = _load_state(scenario, ai)
+def apply_summary_edit(run_key: str, text: str) -> dict:
+    state, ws = _load_state(run_key)
     state["summary_text"] = text
     state["summary_edited"] = True
     (ws / "state.json").write_text(json.dumps(state, indent=1))
     result = _rebuild(state, ws)
-    return _serialize(result, scenario, ai, _protocol_from(state))
+    return _serialize(result, state["scenario"], state["ai"], _protocol_from(state), run_key)
 
 
-def apply_edits(scenario: str, ai: bool, payload: dict) -> dict:
-    state, ws = _load_state(scenario, ai)
+def apply_edits(run_key: str, payload: dict) -> dict:
+    state, ws = _load_state(run_key)
     proto = state["protocol"]
     limit_changed = (
         payload.get("lower") is not None and float(payload["lower"]) != float(proto["lower_limit"] or 0)
@@ -127,11 +156,11 @@ def apply_edits(scenario: str, ai: bool, payload: dict) -> dict:
         raise ValueError("no edits supplied")
     (ws / "state.json").write_text(json.dumps(state, indent=1))
     result = _rebuild(state, ws)
-    return _serialize(result, scenario, ai, _protocol_from(state))
+    return _serialize(result, state["scenario"], state["ai"], _protocol_from(state), run_key)
 
 
-def _load_state(scenario: str, ai: bool) -> tuple[dict, Path]:
-    ws = _workspace(scenario, ai)
+def _load_state(run_key: str) -> tuple[dict, Path]:
+    ws = _workspace(run_key)
     f = ws / "state.json"
     if not f.exists():
         raise ValueError("generate first")
@@ -211,9 +240,11 @@ def _artifact_payload(path: Path) -> dict:
     }
 
 
-def _serialize(result: GenerationResult, scenario: str, ai: bool, proto: Protocol) -> dict:
+def _serialize(result: GenerationResult, scenario: str, ai: bool, proto: Protocol,
+               run_key: str = "") -> dict:
     summary = next(s for s in result.sections if s.key == "Summary and observations")
     return {
+        "runKey": run_key,
         "scenario": scenario,
         "aiRequested": ai,
         "draftBanner": DRAFT_BANNER,
@@ -236,7 +267,7 @@ def _serialize(result: GenerationResult, scenario: str, ai: bool, proto: Protoco
             }
             for s in result.sections
         ],
-        "summaryEdited": _summary_edited_flag(result, scenario, ai),
+        "summaryEdited": _summary_edited_flag(run_key),
         "artifacts": {
             "docx": _artifact_payload(result.docx_path),
             "xlsx": _artifact_payload(result.xlsx_path),
@@ -256,8 +287,8 @@ def _serialize(result: GenerationResult, scenario: str, ai: bool, proto: Protoco
     }
 
 
-def _summary_edited_flag(result, scenario, ai) -> bool:
-    ws = _workspace(scenario, ai)
+def _summary_edited_flag(run_key: str) -> bool:
+    ws = _workspace(run_key)
     f = ws / "state.json"
     if f.exists():
         return bool(json.loads(f.read_text()).get("summary_edited"))
