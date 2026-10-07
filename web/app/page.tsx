@@ -421,8 +421,25 @@ export default function Home() {
       </section>
 
       {/* upload your own inputs */}
-      <section style={{ margin: "20px 0 0" }}>
+      <section style={{ margin: "20px 0 0" }} id="upload">
         <div className="sheet">
+          <div
+            style={{
+              background: "var(--signal)",
+              color: "var(--paper)",
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              padding: "8px 20px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>↓ upload your own files here — the engine runs on whatever you give it</span>
+            <span>required: protocol · results.csv · template</span>
+          </div>
           <div className="sheet-head">
             <span className="sheet-title">01b · bring your own inputs</span>
             <span className="sheet-index">same engine, your files</span>
@@ -847,7 +864,7 @@ export default function Home() {
       <footer className="colophon">
         <span>substrate · built as the assignment deliverable</span>
         <span>
-          engine: <a href="https://localhost/minireport">python · evidence → sections → artifacts</a>
+          engine: python · evidence → sections → artifacts
         </span>
       </footer>
 
