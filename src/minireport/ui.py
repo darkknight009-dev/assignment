@@ -57,13 +57,14 @@ with st.sidebar:
     if source == "Built-in demo inputs":
         demo_choice = st.selectbox(
             "Demo scenario",
-            ["demo_complete", "demo_failing", "demo_incomplete"],
-            format_func=lambda s: {"demo_complete": "1) Complete input",
-                                   "demo_failing": "2) Failing result",
-                                   "demo_incomplete": "3) Incomplete input"}[s],
+            ["1) Complete input", "2) Failing result", "3) Incomplete input"],
+            key="demo_choice",
         )
+        demo_dir = {"1) Complete input": "demo_complete",
+                    "2) Failing result": "demo_failing",
+                    "3) Incomplete input": "demo_incomplete"}[demo_choice]
         try:
-            input_dir = _use_builtin_demo(demo_choice)
+            input_dir = _use_builtin_demo(demo_dir)
         except FileNotFoundError as exc:
             st.sidebar.error(str(exc))
             input_dir = None
@@ -97,19 +98,27 @@ if input_dir is None:
 # ------------------------------------------------------------------ generate --
 result = None
 error = None
-if go or "cached_result" not in st.session_state:
+stale = st.session_state.get("input_dir") != str(input_dir)
+if go or "cached_result" not in st.session_state or stale:
     try:
         llm = None
         if ai_mode:
-            from .llm import OpenAILLM
-
+            try:
+                from .llm import OpenAILLM
+            except ImportError:  # streamlit runs this file standalone
+                from minireport.llm import OpenAILLM
             llm = OpenAILLM()
-        from .pipeline import generate
+        try:
+            from .pipeline import generate
+        except ImportError:
+            from minireport.pipeline import generate
 
         with st.spinner("Generating report package..."):
             result = generate(input_dir, _fresh_workspace("out"), llm=llm)
         st.session_state.cached_result = result
         st.session_state.input_dir = str(input_dir)
+        st.session_state.pop("summary_text", None)
+        st.session_state.pop("summary_editor", None)
     except Exception as exc:
         error = str(exc)
         result = st.session_state.get("cached_result")
@@ -180,8 +189,10 @@ with right:
         result.sections[idx_summary].ai_used = True
         st.session_state.summary_text = edited
         # rebuild artifacts from the edited state
-        from .pipeline import regenerate_artifacts
-
+        try:
+            from .pipeline import regenerate_artifacts
+        except ImportError:
+            from minireport.pipeline import regenerate_artifacts
         regenerate_artifacts(result, input_dir)
         st.success("Summary applied — DOCX, PDF, ZIP regenerated.")
 
@@ -211,7 +222,10 @@ with right:
     value_changed = (float(new_val) != float(values.get(chosen) or 0.0))
     if st.button("Apply edits & regenerate", type="primary"):
         try:
-            from .pipeline import apply_edits_and_regenerate
+            try:
+                from .pipeline import apply_edits_and_regenerate
+            except ImportError:
+                from minireport.pipeline import apply_edits_and_regenerate
 
             new_result = apply_edits_and_regenerate(
                 result, input_dir,

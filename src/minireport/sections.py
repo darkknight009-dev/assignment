@@ -200,18 +200,31 @@ def build_summary_section(bundle, evidence: Evidence, method_section: SectionCon
 
 def _deterministic_summary(bundle, evidence, oor, miss, missing_att) -> str:
     proto = bundle.protocol
+    planned = bundle.protocol.planned_sample_ids
+    received = [r.sample_id for r in evidence.results]
+    missing_planned = [s for s in planned if s not in set(received)]
+
     parts = [
         f"A total of {evidence.total} samples were evaluated against the protocol acceptance range "
         f"[{_fmt(proto.lower_limit)}, {_fmt(proto.upper_limit)}] {proto.units}: "
         f"{evidence.passed} passed and {evidence.failed} failed."
     ]
     if oor:
+        detail = ", ".join(
+            f"{e['sample_id']} measured {e['measurement_display']} {e['unit']}"
+            for e in evidence.evaluations if e["verdict"] == "Fail"
+        )
         parts.append(
-            f"Out-of-range results were observed for {', '.join(oor)}. These values are reported as "
+            f"Out-of-range results were observed for {detail}. These values are reported as "
             "measured; no retest or adjustment was applied and no explanation is assumed."
         )
     else:
         parts.append("All measured results were within the acceptance range.")
+    if missing_planned:
+        parts.append(
+            f"Planned sample(s) {', '.join(missing_planned)} were not received and no results are "
+            "available for them; the plan called for " + f"{len(planned)} samples."
+        )
     if miss:
         parts.append(
             f"No measurement was recorded for {', '.join(miss)}; these samples are excluded from the "

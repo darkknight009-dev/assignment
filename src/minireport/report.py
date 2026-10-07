@@ -1,8 +1,9 @@
 """Build the generated report DOCX from the uploaded template.
 
 Approach: the template's fixed wording is preserved exactly; only
-``[[PLACEHOLDER]]`` spans are replaced.  Section bodies are written as bullet
-or body paragraphs, each carrying its own provenance marker.
+``[[PLACEHOLDER]]`` spans are replaced.  Generated section bodies are
+inserted directly below their template headings, each carrying a process
+control marker and provenance references.
 """
 
 from __future__ import annotations
@@ -20,20 +21,17 @@ PROCESS_LABEL = {
     "ai": "Process control: AI-assisted narrative (fact-checked)",
 }
 
+_WML = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
 
 def build_report_docx(bundle, sections: list[SectionContent], evidence: Evidence,
                       attachment_labels: dict[str, str], att_index_text: str,
                       out_path: Path) -> tuple[list[str], list[str]]:
-    """Write the report DOCX.
-
-    Returns ``(placeholders_used, unfilled_placeholders)``.
-    """
+    """Write the report DOCX. Returns ``(placeholders_used, unfilled)``."""
     from docx import Document
-    from docx.shared import Pt, RGBColor
 
     doc = Document(str(bundle.template_path))
 
-    # strip any template demo body left under the title page
     used: set[str] = set()
     unfilled: set[str] = set()
 
@@ -52,7 +50,7 @@ def build_report_docx(bundle, sections: list[SectionContent], evidence: Evidence
         "GENERATED_AT": _now(),
     }
 
-    # 1) fill placeholders in the template's own paragraphs ------------------
+    # 1) fill placeholders in the template's own paragraphs -------------------
     for para in doc.paragraphs:
         _fill_placeholders(para, mapping, used, unfilled)
     for table in doc.tables:
@@ -61,45 +59,64 @@ def build_report_docx(bundle, sections: list[SectionContent], evidence: Evidence
                 for para in cell.paragraphs:
                     _fill_placeholders(para, mapping, used, unfilled)
 
-    # 2) locate section headings and inject generated content ---------------
-    section_map: dict[str, object] = {}
-    for para in doc.paragraphs:
-        if para.style is not None and para.style.name.startswith("Heading"):
-            section_map[para.text.strip()] = para
-
+    # 2) inject generated content under each section heading -----------------
     bodies = {s.key: s for s in sections}
+    headings = [p for p in doc.paragraphs
+                if p.style is not None and p.style.name.startswith("Heading") and p.text.strip()]
 
-    for heading_text, para in list(section_map.items()):
-        sec = _match_section(heading_text, bodies)
+    for heading_para in headings:
+        sec = _match_section(heading_para.text.strip(), bodies)
         if sec is None:
             continue
-        _clear_after_heading(doc, para)
-        _mark_process_control(doc, para, sec)
+        _clear_after_heading(doc, heading_para)
+        _write_section(doc, heading_para, sec, evidence)
 
-        if sec.key == "Project information and fixed statements":
-            _write_project_info(doc, sec, mapping)
-        elif sec.key == "Results and evidence":
-            _write_results(doc, sec, evidence)
-        elif sec.key == "Test method and reference guidance":
-            _write_rag(doc, sec)
-        else:
-            _write_summary(doc, sec)
+    # 3) attachment index + validation appendix (append at end) ---------------
+    doc.add_heading("Attachment index", level=1)
+    for line in att_index_text.split("\n"):
+        if line.startswith("- "):
+            doc.add_paragraph(line[2:], style="List Bullet")
+        elif line.strip():
+            doc.add_paragraph(line)
 
-        _write_warnings(doc, sec)
-
-    # 3) attachment index -----------------------------------------------------
-    _write_attachment_index(doc, att_index_text, used, unfilled, mapping)
-
-    # 4) validation appendix ---------------------------------------------------
-    _write_validation_placeholder(doc, evidence)
+    doc.add_heading("Validation summary (auto-generated)", level=1)
+    doc.add_paragraph(
+        "The full validation checklist is rendered in the application UI. "
+        "Out-of-range and missing-evidence findings are never removed by "
+        "automated processing."
+    )
+    if evidence.failed:
+        p = doc.add_paragraph()
+        run = p.add_run(f"{evidence.failed} result(s) out of range are preserved "
+                        "verbatim in this report.")
+        run.bold = True
 
     doc.save(str(out_path))
     return sorted(used), sorted(unfilled)
 
 
 # ------------------------------------------------------------------ helpers --
+class _Inserter:
+    """Insert new block items sequentially after an anchor XML element."""
+
+    def __init__(self, doc, anchor_element) -> None:
+        self.doc = doc
+        self.anchor = anchor_element
+
+    def paragraph(self, text: str = "", style: str | None = None):
+        p = self.doc.add_paragraph(text, style=style) if style else self.doc.add_paragraph(text)
+        self.anchor.addnext(p._p)
+        self.anchor = p._p
+        return p
+
+    def table(self, table):
+        self.anchor.addnext(table._tbl)
+        self.anchor = table._tbl
+        return table
+
+
 def _fill_placeholders(para, mapping, used: set, unfilled: set) -> None:
-    def replace_in_run(run) -> None:
+    for run in para.runs:
         for m in PLACEHOLDER_PATTERN.finditer(run.text):
             name = m.group(1)
             used.add(name)
@@ -110,12 +127,8 @@ def _fill_placeholders(para, mapping, used: set, unfilled: set) -> None:
             else:
                 run.text = run.text.replace(m.group(0), str(value))
 
-    for run in para.runs:
-        replace_in_run(run)
-
 
 def _match_section(heading_text: str, bodies: dict[str, SectionContent]) -> SectionContent | None:
-    """Match a template heading to a generated section, tolerating numbering."""
     h = heading_text.lower()
     for key, sec in bodies.items():
         k = key.lower()
@@ -142,120 +155,84 @@ def _clear_after_heading(doc, heading_para) -> None:
             removing = True
             continue
         if removing:
-            if child.tag.endswith("}p"):
-                style_el = child.find(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pStyle")
-                if style_el is not None and style_el.get(
-                    "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val", ""
-                ).startswith("Heading"):
+            if child.tag == f"{_WML}p":
+                style_el = child.find(f".//{_WML}pStyle")
+                if style_el is not None and style_el.get(f"{_WML}val", "").startswith("Heading"):
                     break
-            if child.tag.endswith("}sectPr"):
+            if child.tag == f"{_WML}sectPr":
                 break
             body.remove(child)
 
 
-def _mark_process_control(doc, heading_para, sec: SectionContent) -> None:
+def _write_section(doc, heading_para, sec: SectionContent, evidence: Evidence) -> None:
     from docx.shared import Pt, RGBColor
 
-    p = doc.add_paragraph()
-    run = p.add_run(PROCESS_LABEL.get(sec.process.split(" ")[0], f"Process control: {sec.process}"))
+    ins = _Inserter(doc, heading_para._p)
+
+    # process control marker
+    p = ins.paragraph(PROCESS_LABEL.get(sec.process.split(" ")[0],
+                                        f"Process control: {sec.process}"))
+    run = p.runs[0] if p.runs else p.add_run("")
     run.italic = True
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-    # move the marker paragraph directly after the heading
-    heading_para._p.addnext(p._p)
 
-
-def _write_project_info(doc, sec: SectionContent, mapping: dict[str, str]) -> None:
-    p = doc.add_paragraph(sec.body)
-
-
-def _write_rag(doc, sec: SectionContent) -> None:
-    for line in sec.body.split("\n"):
+    # body lines
+    for raw in sec.body.split("\n"):
+        line = raw.rstrip()
         if not line.strip():
+            if sec.key == "Project information and fixed statements":
+                ins.paragraph("")
             continue
         if line.startswith("- "):
-            p = doc.add_paragraph(line[2:], style="List Bullet")
+            ins.paragraph(line[2:], style="List Bullet")
         else:
-            p = doc.add_paragraph(line)
+            ins.paragraph(line)
+
+    # results table for the evidence section
+    if sec.key == "Results and evidence":
+        _add_results_table(ins, evidence)
+
+    # citations as trailing note
+    if sec.citations:
+        p = ins.paragraph("Sources: " + "; ".join(c.reference for c in sec.citations))
+        for r in p.runs:
+            r.italic = True
+            r.font.size = Pt(8.5)
+
+    # warnings
+    for w in sec.warnings:
+        p = ins.paragraph("Note: " + w)
+        for r in p.runs:
+            r.italic = True
+            r.font.color.rgb = RGBColor(0x99, 0x66, 0x00)
 
 
-def _write_results(doc, sec: SectionContent, evidence: Evidence) -> None:
-    for line in sec.body.split("\n"):
-        if not line.strip():
-            continue
-        if line.startswith("- "):
-            doc.add_paragraph(line[2:], style="List Bullet")
-        else:
-            doc.add_paragraph(line)
-    # deterministic results table
-    table = doc.add_table(rows=1, cols=5)
+def _add_results_table(ins: _Inserter, evidence: Evidence) -> None:
+    from docx.shared import RGBColor
+
+    table = ins.doc.add_table(rows=1, cols=5)
     table.style = "Table Grid"
     hdr = table.rows[0].cells
     for i, h in enumerate(["Sample ID", "Measurement", "Unit", "Verdict", "CSV row"]):
         hdr[i].text = h
-        hdr[i].paragraphs[0].runs[0].bold = True
+        if hdr[i].paragraphs[0].runs:
+            hdr[i].paragraphs[0].runs[0].bold = True
     for ev in evidence.evaluations:
         row = table.add_row().cells
         row[0].text = str(ev["sample_id"])
         row[1].text = f"{ev['measurement_display']} {ev['unit']}".strip()
-        row[2].text = str(ev["unit"]) if not ev["unit"] else ""
+        row[2].text = str(ev["unit"])
         row[3].text = str(ev["verdict"])
         row[4].text = f"row {ev['row_number']}"
-    _flag_failures(doc, table, evidence)
-
-
-def _flag_failures(doc, table, evidence: Evidence) -> None:
-    from docx.shared import RGBColor
-
     for i, ev in enumerate(evidence.evaluations, start=1):
         if ev["verdict"] == "Fail":
             for cell in table.rows[i].cells:
                 for para in cell.paragraphs:
-                    for run in para.runs:
-                        run.font.color.rgb = RGBColor(0xB0, 0x00, 0x00)
-                        run.bold = True
-
-
-def _write_summary(doc, sec: SectionContent) -> None:
-    if not sec.body:
-        doc.add_paragraph("(AI draft discarded -- deterministic summary unavailable. See validation.)")
-        return
-    for para_text in sec.body.split("\n\n"):
-        doc.add_paragraph(para_text.strip())
-
-
-def _write_warnings(doc, sec: SectionContent) -> None:
-    from docx.shared import RGBColor
-
-    if not sec.warnings:
-        return
-    for w in sec.warnings:
-        p = doc.add_paragraph()
-        run = p.add_run("Note: " + w)
-        run.italic = True
-        run.font.color.rgb = RGBColor(0x99, 0x66, 0x00)
-
-
-def _write_attachment_index(doc, att_index_text: str, used: set, unfilled: set, mapping: dict) -> None:
-    doc.add_heading("Attachment index", level=1)
-    for line in att_index_text.split("\n"):
-        if line.startswith("- "):
-            doc.add_paragraph(line[2:], style="List Bullet")
-        elif line.strip():
-            doc.add_paragraph(line)
-
-
-def _write_validation_placeholder(doc, evidence: Evidence) -> None:
-    doc.add_heading("Validation summary (auto-generated)", level=1)
-    doc.add_paragraph(
-        "The full validation checklist is rendered in the application UI and in the "
-        "combined PDF. Out-of-range and missing-evidence findings are never removed "
-        "by automated processing."
-    )
-    if evidence.failed:
-        p = doc.add_paragraph()
-        run = p.add_run(f"{evidence.failed} result(s) out of range are preserved verbatim in this report.")
-        run.bold = True
+                    for r in para.runs:
+                        r.font.color.rgb = RGBColor(0xB0, 0x00, 0x00)
+                        r.bold = True
+    ins.table(table)
 
 
 def _g(v: float | None) -> str:

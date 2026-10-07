@@ -51,6 +51,8 @@ class LocalIndex:
                 tokens = content_tokens(para)
                 if len(tokens) < 4:
                     continue  # skip headings-only / trivial fragments
+                if para.startswith("#"):
+                    continue  # markdown headings are titles, not content
                 para_counter += 1
                 location = f"p{page_no} para{para_counter}" if page_no else f"para{para_counter}"
                 tf: dict[str, int] = {}

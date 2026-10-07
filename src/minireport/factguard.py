@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from .models import Evidence, Protocol
 from .retrieval import RetrievalResult
 
-NUM_RE = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*\.?\d*%?")
+# Numbers not embedded in an identifier: "S-01" or "TW-88231" are IDs, not quantities.
+NUM_RE = re.compile(r"(?<![A-Za-z0-9-])[-+]?\d[\d,]*\.?\d*%?")
 SPACE_BEFORE_PCT = re.compile(r"(\d)\s+%")
 SPURIOUS_PCT = re.compile(r"(\d)%\s")
 
@@ -40,7 +41,21 @@ def collect_allowed_numbers(evidence: Evidence, protocol: Protocol,
         s = f"{x:g}" if isinstance(x, float) else str(x)
         for f in allow_forms:
             allowed.add(f(s))
-        allowed.add(str(int(s.replace(",", "").rstrip("%"))) if s.replace(",", "").rstrip("%").lstrip("-+").isdigit() else s)
+        # decimal display forms: 45.0 == 45, 48.20 == 48.2
+        cleaned = s.replace(",", "").rstrip("%").lstrip("+")
+        try:
+            val = float(cleaned)
+        except ValueError:
+            pass
+        else:
+            if val == int(val):
+                allowed.add(f"{val:.1f}")
+                allowed.add(f"{val:.2f}")
+                allowed.add(f"{val:.3f}")
+            else:
+                allowed.add(str(val))
+                allowed.add(f"{val:.2f}")
+                allowed.add(f"{val:.3f}")
 
     # sample-level measurements (as displayed) and parsed floats
     for r in evidence.results:
@@ -87,7 +102,8 @@ def check_text(text: str, allowed: set[str], context: str = "") -> FactGuardRepo
             raw.rstrip("%"),
             raw.replace(",", "").rstrip("%"),
             raw.lstrip("+"),
-            raw.lstrip("+").replace(",", ""),
+            raw.lstrip("-+"),
+            raw.lstrip("-+").replace(",", ""),
         }
         if not candidates & allowed:
             line_ctx = text[max(0, m.start() - 40):m.end() + 40].strip()
