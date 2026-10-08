@@ -24,7 +24,8 @@ Suggested flow with talking points (run `streamlit run src/minireport/ui.py`).
 
 - Switch to "2) Failing result" → generate.
 - Checklist flags S-02 = 58.4 Nm > 55 Nm. Show it consistently in: the results
-  table in the UI, the red rows in the DOCX (`outputs_failing/`), the red row
+  table in the UI, the red rows in the DOCX (regenerate it with the CLI into
+  `outputs_failing/`, or download it from the UI), the red row
   in the Excel file, and the narrative stating "S-02 measured 58.4 Nm".
 - Key point: **nothing rewrote the value**; the summary reports it verbatim and
   explicitly declines to invent a cause.

@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# minireport web UI
 
-## Getting Started
+The Next.js 15 (React 19, TypeScript) frontend for the Python `minireport`
+report-generation engine in `../src/minireport`. A single-page app that drives
+the same tested engine the CLI and Streamlit UI use.
 
-First, run the development server:
+## Prerequisites
+
+- Python 3.11+ with the repo requirements installed:
+
+  ```bash
+  pip install -r ../requirements.txt   # from web/
+  pip install -e ..
+  ```
+
+- Node 18+
+
+## Run
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev    # runs scripts/preflight.mjs first, then next dev --turbopack
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## How it works
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The single page `app/page.tsx` POSTs to `app/api/generate/route.ts`, which
+spawns `python3 -m minireport.webapi_cli <json>` with the repo root as cwd and
+`PYTHONPATH=src`. The bridge answers with one JSON object containing the
+validation checklist, per-section provenance (citations plus the AI
+fallback-chain log showing which model answered), and base64-encoded
+docx/xlsx/pdf/zip artifacts for one-click download. Edit state persists in
+`/tmp/minireport/webcache/<run_key>/state.json`, so summary and
+limit/measurement edits survive across separate requests.
 
-## Learn More
+## Features
 
-To learn more about Next.js, take a look at the following resources:
+- Three built-in demo scenarios: complete / failing / incomplete.
+- Optional custom input-set upload (multipart form): protocol.md, results.csv,
+  report_template.docx, plus reference files and PDF attachments.
+- AI toggle for the summary narrative — needs `OPENROUTER_API_KEY` in the
+  repo-root `.env` or environment; without it the deterministic fallback
+  summary is used and nothing breaks.
+- Animated 8-stage pipeline view.
+- Validation checklist after every run.
+- Editable summary and acceptance limits/measurements with live regenerate —
+  the whole package rebuilds from one evidence decision point.
+- One-click downloads of DOCX / XLSX / PDF / ZIP.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `OPENROUTER_API_KEY` (optional) — enables the AI-assisted summary via
+  OpenRouter; put it in the repo-root `.env` or export it before starting.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

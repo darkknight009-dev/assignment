@@ -27,6 +27,20 @@ python -m minireport.cli inputs/demo_variants/incomplete outputs_incomplete # ca
 streamlit run src/minireport/ui.py     # or use the classic UI
 ```
 
+Note that `inputs/`, `outputs*/` and `examples/` are fully generated
+artifacts, not hand-maintained: `python scripts/make_inputs.py` recreates all
+demo input sets (`inputs/` plus the failing/incomplete variants and the
+`templates/demo_*` copies), and the test suite needs that run first.
+
+### Regenerating inputs and example outputs
+
+```bash
+python scripts/make_inputs.py
+python -m minireport.cli inputs examples/complete
+python -m minireport.cli inputs/demo_variants/failing examples/failing
+python -m minireport.cli inputs/demo_variants/incomplete examples/incomplete
+```
+
 ### Web UI (Next.js)
 
 A modern frontend lives in `web/` (Next.js 15, React 19, plain-CSS editorial
@@ -43,8 +57,11 @@ Flow: pick a demo case (complete / failing / incomplete) → watch the animated
 8-stage engine pipeline → review the validation checklist and each section's
 provenance (citations, AI chain log with which model answered) → edit the
 summary or the limits/measurements → regenerate → download DOCX / XLSX /
-PDF / ZIP. The Next.js API route spawns the Python bridge
-(`minireport.webapi_cli`) with the repo root as cwd; edit state persists in
+PDF / ZIP. The UI also accepts a custom uploaded input set (protocol.md,
+results.csv, report_template.docx, plus optional reference .md/.txt files and
+.pdf attachments), processed by the same bridge. The Next.js API route spawns
+the Python bridge (`minireport.webapi_cli`) with the repo root as cwd; edit
+state persists in
 `/tmp/minireport/webcache/<scenario>/state.json` so edits work across
 requests. Set `OPENROUTER_API_KEY` (or `.env`) before starting to enable AI
 summaries.
@@ -148,30 +165,14 @@ inputs/ ──► inputs.py (locate & load)
                                      ──► pdfbuild.py (combined PDF + attachments)
                                      ──► ZIP package
              validation.py ──► checklist (planned/actual, missing, range, placeholders)
+                  ▲
+                  └── webapi.py ◄── web/app/api/generate (Next.js route → bridge CLI)
 ```
 
 UIs: `web/` (Next.js 15 + React 19 — hero, scenario picker, animated
 pipeline, provenance sections, AI chain log, summary editor, limit/value
 editing, downloads) and `src/minireport/ui.py` (Streamlit classic). Both drive
 the same Python engine. CLI: `src/minireport/cli.py`.
-```
-inputs/ ──► inputs.py (locate & load)
-             parsers.py (protocol / CSV / template)
-             docreader.py (PDF/DOCX/TXT text extraction)
-                  │
-                  ├──► evidence.py  ← the ONLY Pass/Fail decision point
-                  ├──► retrieval.py (local TF-IDF index, paragraph chunks)
-                  │        └── factguard.py (number allow-list check)
-                  ├──► sections.py (4 section builders + provenance)
-                  │
-                  └──► pipeline.py ──► report.py (DOCX from template)
-                                     ──► xlsx.py (workbook)
-                                     ──► pdfbuild.py (combined PDF + attachments)
-                                     ──► ZIP package
-             validation.py ──► checklist (planned/actual, missing, range, placeholders)
-                  ▲
-                  └── webapi.py ◄── web/app/api/generate (Next.js route → bridge CLI)
-```
 
 ## Known limitations
 
@@ -193,6 +194,6 @@ Developed with the assistance of an AI coding agent (Codebuff) for scaffolding
 and boilerplate; architecture, section-generation strategy, fact-guard rules
 and demo design were defined against the assignment brief and are documented
 in-source. All code was reviewed and exercised via the automated test suite
-(27 tests, including the OpenRouter fallback chain with stubbed HTTP and
+(30 tests, including the OpenRouter fallback chain with stubbed HTTP and
 reasoning-leak stripping) and the three demo cases. No other developers
 contributed.

@@ -23,7 +23,7 @@ Per the assignment's submission requirements:
 
 **Verification performed**
 
-- 26 automated tests (`python -m pytest`) covering the three mandatory demo
+- 30 automated tests (`python -m pytest`) covering the three mandatory demo
   cases, Pass/Fail boundary behaviour, the fact guard, retrieval citations,
   placeholder detection and the OpenRouter free-model fallback chain
   (stubbed, no network).
